@@ -1,79 +1,42 @@
-import streamlit as st
-import folium
-from streamlit_folium import folium_static
+import requests
 import time
-from gps import get_gps_data
 
-def initialize_map():
-    # Set initial map view to a default location
-    default_location = [0, 0]  # Will be updated with actual GPS data
-    m = folium.Map(location=default_location, zoom_start=16)
-    return m
+# PyPhox live endpoint
+url = "http://192.168.171.179:8080/get?status&lat&lon&z&zwgs84&v&dir&dist&diststart&accuracy&zAccuracy&satellites"
 
-def update_map(m, gps_data):
-    if not gps_data:
-        return m
-    
-    # Clear existing markers
-    m = folium.Map(location=[gps_data["Latitude"], gps_data["Longitude"]], zoom_start=16)
-    
-    # Add marker for current position
-    folium.Marker(
-        [gps_data["Latitude"], gps_data["Longitude"]],
-        popup=f"Speed: {gps_data['Speed (m/s)']} m/s<br>Altitude: {gps_data['Altitude']} m",
-        icon=folium.Icon(color='red', icon='info-sign')
-    ).add_to(m)
-    
-    return m
+def get_gps_data():
+    try:
+        response = requests.get(url, timeout=5)
+        data = response.json()
 
-def display_gps_metrics(gps_data):
-    if not gps_data:
-        st.warning("⚠️ No GPS data received")
-        return
-    
-    # Create three columns for metrics
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.metric("Speed", f"{gps_data['Speed (m/s)']:.2f} m/s")
-        st.metric("Direction", f"{gps_data['Direction (°)']:.1f}°")
-    
-    with col2:
-        st.metric("Altitude", f"{gps_data['Altitude']:.1f} m")
-        st.metric("Satellites", int(gps_data['Satellites']))
-    
-    with col3:
-        st.metric("Accuracy", f"{gps_data['Accuracy (m)']:.1f} m")
-        st.metric("Distance", f"{gps_data['Distance (m)']:.1f} m")
+        buffer = data.get("buffer", {})
 
-def main():
-    st.title("Live GPS Tracking")
-    
-    # Initialize the map
-    map_placeholder = st.empty()
-    metrics_placeholder = st.empty()
-    
-    # Create a flag for tracking
-    tracking = st.checkbox("Enable Live Tracking", value=True)
-    
-    # Initialize map
-    m = initialize_map()
-    
-    while tracking:
-        # Get GPS data
-        gps_data = get_gps_data()
-        
-        # Update map if we have valid GPS data
-        if gps_data:
-            m = update_map(m, gps_data)
-            with map_placeholder:
-                folium_static(m)
-            
-            with metrics_placeholder:
-                display_gps_metrics(gps_data)
-        
-        # Wait before next update
-        time.sleep(1)
+        def extract(key):
+            val = buffer.get(key, {}).get("buffer", [None])[0]
+            return val if val is not None else "N/A"
 
-if __name__ == "__main__":
-    main()
+        # Convert scientific notation (e.g., 1.2839442E1) into float
+        latitude = float(extract("lat"))
+        longitude = float(extract("lon"))
+        altitude = float(extract("z"))
+        speed = extract("v")
+        direction = extract("dir")
+        accuracy = float(extract("accuracy"))
+        sat_count = int(float(extract("satellites")))
+
+        print("\n--- Live GPS Data ---")
+        print(f"Latitude      : {latitude}")
+        print(f"Longitude     : {longitude}")
+        print(f"Altitude (m)  : {altitude}")
+        print(f"Speed (m/s)   : {speed}")
+        print(f"Direction (°) : {direction}")
+        print(f"Accuracy (m)  : {accuracy}")
+        print(f"Satellites    : {sat_count}")
+
+    except Exception as e:
+        print("Error:", e)
+
+# Continuous loop
+while True:
+    get_gps_data()
+    time.sleep(2)
