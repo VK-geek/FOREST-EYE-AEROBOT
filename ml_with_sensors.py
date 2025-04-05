@@ -4,78 +4,98 @@ import time
 import board
 import adafruit_dht
 import Adafruit_BMP.BMP085 as BMP085
+import lgpio
 
-# --- Title ---
-st.set_page_config(page_title="Forest-Eye Dashboard", layout="wide")
-st.title("🌲 Forest-Eye: Environmental & Weather Monitoring")
+# ---------------- Config ----------------
+st.set_page_config(page_title="🌲 Forest-Eye Live Dashboard", layout="wide")
+st.title("🌲 Forest-Eye: Live Environmental Monitoring")
 
-# --- Initialize Sensors ---
+# ---------------- Sensor Setup ----------------
 DHT_SENSOR = adafruit_dht.DHT11(board.D4)
 bmp_sensor = BMP085.BMP085(busnum=1)
 
-# --- Sensor Data Section ---
-st.header("🌡️ Live Sensor Readings")
+MQ2_PIN = 17
+h = lgpio.gpiochip_open(0)
+lgpio.gpio_claim_input(h, MQ2_PIN)
 
-# Read sensor data
-try:
-    dht_temp = DHT_SENSOR.temperature
-    dht_humidity = DHT_SENSOR.humidity
-    bmp_temp = bmp_sensor.read_temperature()
-    bmp_pressure = bmp_sensor.read_pressure() / 100  # Convert to hPa
+# ---------------- Load Models ----------------
+@st.cache_resource
+def load_models():
+    return {
+        "fire": joblib.load("fire_risk_model.pkl"),
+        "storm": joblib.load("storm_alert_model.pkl"),
+        "anomaly": joblib.load("weather_anomaly_model.pkl"),
+        "weather": joblib.load("weather_classification_model.pkl")
+    }
 
-    # Use BMP180 pressure and DHT11 humidity and temperature
-    temperature = dht_temp if dht_temp is not None else bmp_temp
-    humidity = dht_humidity if dht_humidity is not None else 50  # default fallback
-    pressure = bmp_pressure
+models = load_models()
+weather_labels = {0: "Sunny", 1: "Cloudy", 2: "Rainy", 3: "Stormy"}
 
-    temp_col, hum_col, pres_col = st.columns(3)
-    temp_col.metric("Temperature (°C)", f"{temperature:.1f}")
-    hum_col.metric("Humidity (%)", f"{humidity:.1f}")
-    pres_col.metric("Pressure (hPa)", f"{pressure:.1f}")
+# ---------------- Live Loop ----------------
+placeholder = st.empty()
+running = st.toggle("▶️ Live Mode", value=True)
 
-    # --- Weather Prediction Models ---
-    fire_model = joblib.load("fire_risk_model.pkl")
-    storm_model = joblib.load("storm_alert_model.pkl")
-    anomaly_model = joblib.load("weather_anomaly_model.pkl")
-    weather_model = joblib.load("weather_classification_model.pkl")
+if running:
+    while running:
+        with placeholder.container():
+            try:
+                # --- Read DHT ---
+                MAX_RETRIES = 3
+                dht_temp = dht_humidity = None
+                for _ in range(MAX_RETRIES):
+                    try:
+                        dht_temp = DHT_SENSOR.temperature
+                        dht_humidity = DHT_SENSOR.humidity
+                        if dht_temp is not None and dht_humidity is not None:
+                            break
+                    except RuntimeError:
+                        time.sleep(0.5)
 
-    # Prepare input data
-    input_data = [[temperature, humidity, pressure]]
+                bmp_temp = bmp_sensor.read_temperature()
+                bmp_pressure = bmp_sensor.read_pressure() / 100
 
-    # Make predictions
-    fire_risk = fire_model.predict(input_data)[0]
-    storm_alert = storm_model.predict(input_data)[0]
-    anomaly = anomaly_model.predict(input_data)[0]
-    weather_class = weather_model.predict(input_data)[0]
+                temperature = dht_temp if dht_temp is not None else bmp_temp
+                humidity = dht_humidity if dht_humidity is not None else 50
+                pressure = bmp_pressure
 
-    weather_labels = {0: "Sunny", 1: "Cloudy", 2: "Rainy", 3: "Stormy"}
+                mq2_value = lgpio.gpio_read(h, MQ2_PIN)
+                gas_status = "Gas Detected" if mq2_value == 0 else "Clear"
 
-    # --- Display Predictions ---
-    st.header("📊 Weather Condition Predictions")
+                # --- Display ---
+                st.subheader("📡 Live Sensor Readings")
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("🌡 Temp (°C)", f"{temperature:.1f}")
+                col2.metric("💧 Humidity (%)", f"{humidity:.1f}")
+                col3.metric("📟 Pressure (hPa)", f"{pressure:.1f}")
+                col4.metric("🧪 MQ-2 Gas", gas_status)
 
-    st.subheader("🔥 Fire Risk Prediction")
-    if fire_risk:
-        st.error("High Fire Risk Detected!")
-    else:
-        st.success("No Fire Risk.")
+                # --- Predictions ---
+                st.subheader("📊 Predictions")
+                input_data = [[temperature, humidity, pressure]]
 
-    st.subheader("⛈ Storm Alert")
-    if storm_alert:
-        st.warning("Storm Alert Active!")
-    else:
-        st.info("No Storm Predicted.")
+                fire_risk = models["fire"].predict(input_data)[0]
+                storm_alert = models["storm"].predict(input_data)[0]
+                anomaly = models["anomaly"].predict(input_data)[0]
+                weather_class = models["weather"].predict(input_data)[0]
 
-    st.subheader("🚨 Anomaly Detection")
-    if anomaly == -1:
-        st.error("Abnormal Weather Conditions Detected")
-    else:
-        st.success("Weather Conditions Normal")
+                st.write("🔥 **Fire Risk:**", "🚨 High" if fire_risk else "✅ Safe")
+                st.write("⛈ **Storm Alert:**", "⚠️ Yes" if storm_alert else "✅ No")
+                st.write("🚨 **Anomaly Detection:**", "❗ Anomaly" if anomaly == -1 else "✅ Normal")
+                st.write("🌦 **Weather:**", f"**{weather_labels.get(weather_class, 'Unknown')}**")
 
-    st.subheader("🌦 Weather Classification")
-    st.info(f"Predicted Weather: **{weather_labels.get(weather_class, 'Unknown')}**")
+            except Exception as e:
+                st.error(f"❌ Error: {e}")
 
-except RuntimeError as error:
-    st.warning(f"Sensor Error: {error}")
+        time.sleep(2)
+else:
+    st.info("⏸ Live updates paused. Toggle 'Live Mode' to resume.")
 
-except Exception as e:
-    st.error(f"Unexpected error: {e}")
+# Cleanup on exit
+def cleanup():
+    try:
+        DHT_SENSOR.exit()
+        lgpio.gpiochip_close(h)
+    except:
+        pass
+
+st.on_event("shutdown", cleanup)
