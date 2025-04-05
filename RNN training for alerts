@@ -1,0 +1,263 @@
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.model_selection import train_test_split, KFold
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Input
+from tensorflow.keras.layers import LSTM, Dense, Dropout, Bidirectional, LayerNormalization
+from tensorflow.keras.utils import to_categorical
+from tensorflow.keras.callbacks import ReduceLROnPlateau
+from sklearn.metrics import classification_report, confusion_matrix
+import seaborn as sns
+import matplotlib.pyplot as plt
+import joblib
+
+def load_and_preprocess_data(file_path, sequence_length=5):
+    # Load data
+    df = pd.read_csv(file_path)
+    
+    # Convert timestamp to datetime features if timestamp column exists
+    if 'Timestamp' in df.columns:
+        df['Timestamp'] = pd.to_datetime(df['Timestamp'])
+        df['Hour'] = df['Timestamp'].dt.hour
+        df['Month'] = df['Timestamp'].dt.month
+        df['DayOfWeek'] = df['Timestamp'].dt.dayofweek
+    
+    # Encode categorical variables
+    le_forest = LabelEncoder()
+    le_weather = LabelEncoder()
+    
+    if 'ForestType' in df.columns:
+        df['ForestType_encoded'] = le_forest.fit_transform(df['ForestType'])
+        joblib.dump(le_forest, 'forest_type_encoder_rnn.joblib')
+    
+    df['Weather_encoded'] = le_weather.fit_transform(df['Weather'])
+    joblib.dump(le_weather, 'weather_encoder_rnn.joblib')
+    
+    # Create feature matrix
+    feature_columns = ['Temperature', 'Humidity', 'Pressure']
+    if 'ForestType' in df.columns:
+        feature_columns.append('ForestType_encoded')
+    if 'Timestamp' in df.columns:
+        feature_columns.extend(['Hour', 'Month', 'DayOfWeek'])
+    
+    X = df[feature_columns].values
+    
+    # Create multi-target array
+    y_weather = df['Weather_encoded'].values
+    y_fire = df['FireRisk'].values if 'FireRisk' in df.columns else np.zeros_like(y_weather)
+    y_storm = df['StormAlert'].values if 'StormAlert' in df.columns else np.zeros_like(y_weather)
+    y_anomaly = df['Anomaly'].values if 'Anomaly' in df.columns else np.zeros_like(y_weather)
+    
+    # Scale features
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+    joblib.dump(scaler, 'feature_scaler_rnn.joblib')
+    
+    # Create sequences with proper padding
+    total_sequences = len(X_scaled) - sequence_length
+    X_sequences = np.zeros((total_sequences, sequence_length, X_scaled.shape[1]))
+    y_weather_sequences = np.zeros((total_sequences,))
+    y_fire_sequences = np.zeros((total_sequences,))
+    y_storm_sequences = np.zeros((total_sequences,))
+    y_anomaly_sequences = np.zeros((total_sequences,))
+    
+    for i in range(total_sequences):
+        X_sequences[i] = X_scaled[i:i + sequence_length]
+        y_weather_sequences[i] = y_weather[i + sequence_length]
+        y_fire_sequences[i] = y_fire[i + sequence_length]
+        y_storm_sequences[i] = y_storm[i + sequence_length]
+        y_anomaly_sequences[i] = y_anomaly[i + sequence_length]
+    
+    # Convert weather labels to categorical
+    y_weather_sequences = to_categorical(y_weather_sequences)
+    
+    # Combine all targets
+    y_sequences = {
+        'weather': y_weather_sequences,
+        'fire_risk': y_fire_sequences,
+        'storm_alert': y_storm_sequences,
+        'anomaly': y_anomaly_sequences
+    }
+    
+    return X_sequences, y_sequences, le_weather
+
+def create_rnn_model(input_shape):
+    # Shared layers
+    inputs = Input(shape=input_shape)
+    x = Bidirectional(LSTM(128, return_sequences=True))(inputs)
+    x = LayerNormalization()(x)
+    x = Dropout(0.2)(x)
+    x = Bidirectional(LSTM(64))(x)
+    x = LayerNormalization()(x)
+    x = Dropout(0.2)(x)
+    shared_features = Dense(64, activation='relu')(x)
+    
+    # Weather classification branch
+    weather_x = Dense(32, activation='relu')(shared_features)
+    weather_output = Dense(4, activation='softmax', name='weather')(weather_x)  # Assuming 4 weather classes
+    
+    # Fire risk branch
+    fire_x = Dense(16, activation='relu')(shared_features)
+    fire_output = Dense(1, activation='sigmoid', name='fire_risk')(fire_x)
+    
+    # Storm alert branch
+    storm_x = Dense(16, activation='relu')(shared_features)
+    storm_output = Dense(1, activation='sigmoid', name='storm_alert')(storm_x)
+    
+    # Anomaly detection branch
+    anomaly_x = Dense(16, activation='relu')(shared_features)
+    anomaly_output = Dense(1, activation='sigmoid', name='anomaly')(anomaly_x)
+    
+    # Create model
+    model = Model(
+        inputs=inputs,
+        outputs=[weather_output, fire_output, storm_output, anomaly_output]
+    )
+    
+    # Compile model
+    model.compile(
+        optimizer='adam',
+        loss={
+            'weather': 'categorical_crossentropy',
+            'fire_risk': 'binary_crossentropy',
+            'storm_alert': 'binary_crossentropy',
+            'anomaly': 'binary_crossentropy'
+        },
+        metrics={
+            'weather': ['accuracy'],
+            'fire_risk': ['accuracy'],
+            'storm_alert': ['accuracy'],
+            'anomaly': ['accuracy']
+        }
+    )
+    
+    return model
+
+def train_model(X, y):
+    # Split data
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42
+    )
+    
+    # Create and train model
+    input_shape = (X.shape[1], X.shape[2])
+    
+    # Implement k-fold cross validation
+    n_splits = 5
+    kfold = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+    fold_scores = {'weather': [], 'fire_risk': [], 'storm_alert': [], 'anomaly': []}
+    
+    for fold, (train_idx, val_idx) in enumerate(kfold.split(X_train)):
+        print(f'\nTraining fold {fold + 1}/{n_splits}')
+        
+        model = create_rnn_model(input_shape)
+        
+        # Learning rate scheduler
+        reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=5, min_lr=1e-6)
+        
+        # Prepare target data for this fold
+        y_train_fold = {
+            'weather': y_train['weather'][train_idx],
+            'fire_risk': y_train['fire_risk'][train_idx],
+            'storm_alert': y_train['storm_alert'][train_idx],
+            'anomaly': y_train['anomaly'][train_idx]
+        }
+        y_val_fold = {
+            'weather': y_train['weather'][val_idx],
+            'fire_risk': y_train['fire_risk'][val_idx],
+            'storm_alert': y_train['storm_alert'][val_idx],
+            'anomaly': y_train['anomaly'][val_idx]
+        }
+        
+        # Train the model
+        history = model.fit(
+            X_train[train_idx],
+            y_train_fold,
+            epochs=50,
+            batch_size=32,
+            validation_data=(X_train[val_idx], y_val_fold),
+            callbacks=[reduce_lr],
+            verbose=1
+        )
+        
+        # Evaluate on validation fold
+        val_results = model.evaluate(X_train[val_idx], y_val_fold, verbose=0)
+        for i, metric in enumerate(['weather', 'fire_risk', 'storm_alert', 'anomaly']):
+            fold_scores[metric].append(val_results[i*2 + 1])  # Get accuracy metrics
+            print(f'Fold {fold + 1} {metric} validation accuracy: {val_results[i*2 + 1]:.4f}')
+    
+    # Print average validation scores
+    print('\nAverage Validation Accuracies:')
+    for metric in fold_scores.keys():
+        print(f'{metric}: {np.mean(fold_scores[metric]):.4f}')
+    
+    # Train final model on all training data
+    final_model = create_rnn_model(input_shape)
+    reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=5, min_lr=1e-6)
+    
+    final_history = final_model.fit(
+        X_train,
+        y_train,
+        epochs=50,
+        batch_size=32,
+        validation_split=0.2,
+        callbacks=[reduce_lr],
+        verbose=1
+    )
+    
+    # Evaluate
+    y_pred = final_model.predict(X_test)
+    
+    # Evaluate weather predictions
+    y_pred_weather = np.argmax(y_pred[0], axis=1)
+    y_test_weather = np.argmax(y_test['weather'], axis=1)
+    
+    print('\nWeather Classification Report:')
+    print(classification_report(y_test_weather, y_pred_weather))
+    
+    # Plot weather confusion matrix
+    plt.figure(figsize=(10, 8))
+    cm = confusion_matrix(y_test_weather, y_pred_weather)
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
+    plt.title('Weather Prediction Confusion Matrix')
+    plt.ylabel('True Label')
+    plt.xlabel('Predicted Label')
+    plt.savefig('weather_confusion_matrix.png')
+    plt.close()
+    
+    # Evaluate binary predictions
+    for i, metric in enumerate(['fire_risk', 'storm_alert', 'anomaly']):
+        y_pred_binary = (y_pred[i+1] > 0.5).astype(int)
+        y_test_binary = y_test[metric].astype(int)
+        
+        print(f'\n{metric.replace("_", " ").title()} Classification Report:')
+        print(classification_report(y_test_binary, y_pred_binary))
+        
+        # Plot binary confusion matrix
+        plt.figure(figsize=(8, 6))
+        cm = confusion_matrix(y_test_binary, y_pred_binary)
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
+        plt.title(f'{metric.replace("_", " ").title()} Confusion Matrix')
+        plt.ylabel('True Label')
+        plt.xlabel('Predicted Label')
+        plt.savefig(f'{metric}_confusion_matrix.png')
+        plt.close()
+    
+    # Save model
+    final_model.save('weather_prediction_rnn.h5')
+    
+    return final_model, final_history
+
+def main():
+    print('Loading and preprocessing data...')
+    X_sequences, y_sequences, le_weather = load_and_preprocess_data('balanced_forest_weather_data.csv')
+    
+    print('Training RNN model...')
+    model, history = train_model(X_sequences, y_sequences)
+    
+    print('\nTraining completed! Model and preprocessing objects saved.')
+
+if __name__ == '__main__':
+    main()
