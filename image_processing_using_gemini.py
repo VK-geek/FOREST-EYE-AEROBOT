@@ -3,31 +3,46 @@ import time
 import base64
 import streamlit as st
 import google.generativeai as genai
+import pandas as pd
+import matplotlib.pyplot as plt
 
-# ✅ Set page config FIRST
+# Set page config
 st.set_page_config(page_title="Forest Eye Aerobot", layout="centered")
 
-# Configure Gemini API
-genai.configure(api_key="AIzaSyBQqhaMjm5_60lQoWvpUOYIZQJIEw8RYik")  # Replace with your actual API key
+# Gemini API setup
+genai.configure(api_key="AIzaSyAHlgdqZrbqPPTSW_pTNBCbPk3Aeadyn6E")  # Replace with your Gemini API Key
 model = genai.GenerativeModel("gemini-2.0-flash")
 
 st.title("🌲 Forest Eye Aerobot - Live Monitoring")
 
-# Initialize session state
+# Initialize session states
 if "monitoring" not in st.session_state:
     st.session_state.monitoring = False
+if "threat_counts" not in st.session_state:
+    st.session_state.threat_counts = {
+        "🔥 Fire/Smoke": 0,
+        "🪓 Deforestation": 0,
+        "🐾 Dangerous Animal": 0,
+        "🧍‍♂️ Human Activity": 0
+    }
 
-# Buttons to start/stop
+# Sidebar for threat stats
+st.sidebar.header("📊 Threat Statistics")
+
+# Start/Stop Buttons
 if not st.session_state.monitoring:
-    if st.button("▶️ Start Monitoring", key="start_button"):
+    if st.button("▶️ Start Monitoring"):
         st.session_state.monitoring = True
 else:
-    if st.button("❌ Stop Monitoring", key="stop_button"):
+    if st.button("❌ Stop Monitoring"):
         st.session_state.monitoring = False
 
 status_box = st.empty()
+frame_placeholder = st.empty()
+threat_table_placeholder = st.sidebar.empty()
+bar_chart_placeholder = st.sidebar.empty()
 
-# Analyze function using Gemini
+# Function to analyze frame using Gemini
 def analyze_frame(frame):
     _, buffer = cv2.imencode('.jpg', frame)
     image_bytes = buffer.tobytes()
@@ -57,6 +72,23 @@ def analyze_frame(frame):
     )
     return response.text.strip()
 
+# Function to update threat displays
+def update_threat_display():
+    df = pd.DataFrame.from_dict(st.session_state.threat_counts, orient='index', columns=["Count"])
+    df.index.name = "Threat Type"
+    df = df.sort_values("Count", ascending=False)
+
+    # Show table
+    threat_table_placeholder.dataframe(df)
+
+    # Show bar chart
+    fig, ax = plt.subplots()
+    ax.bar(df.index, df["Count"], color=["red", "brown", "orange", "purple"])
+    ax.set_ylabel("Detections")
+    ax.set_title("📈 Detected Threats")
+    ax.set_xticklabels(df.index, rotation=45, ha='right')
+    bar_chart_placeholder.pyplot(fig)
+
 # Monitoring loop
 if st.session_state.monitoring:
     cap = cv2.VideoCapture(0)
@@ -67,7 +99,6 @@ if st.session_state.monitoring:
         st.session_state.monitoring = False
     else:
         st.success("✅ Camera is active. Monitoring in progress...")
-        frame_placeholder = st.empty()
 
         while st.session_state.monitoring:
             ret, frame = cap.read()
@@ -75,7 +106,7 @@ if st.session_state.monitoring:
                 st.error("❌ Failed to read from webcam.")
                 break
 
-            # Convert and show live feed
+            # Convert to RGB and show
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             frame_placeholder.image(frame_rgb, channels="RGB", caption="📷 Live Forest Feed")
 
@@ -85,8 +116,31 @@ if st.session_state.monitoring:
                     description = analyze_frame(frame)
                 except Exception as e:
                     description = f"⚠️ Error: {e}"
-                status_box.markdown(f"**🧠 Gemini says:** {description}")
+
+                st.markdown(f"**🧠 Gemini says:** {description}")
                 last_time = time.time()
+
+                # Skip if no threats detected
+                if "✅ no threats detected" not in description.lower():
+                    desc_lower = description.lower()
+
+                    # Keyword lists
+                    fire_keywords = ["fire", "smoke", "wildfire"]
+                    deforestation_keywords = ["deforestation", "chopped", "cut tree", "land clearing"]
+                    animal_keywords = ["animal", "tiger", "elephant", "bear", "snake", "wild animal"]
+                    human_keywords = ["human", "person", "intruder", "poacher", "man", "woman"]
+
+                    # Update counts
+                    if any(k in desc_lower for k in fire_keywords):
+                        st.session_state.threat_counts["🔥 Fire/Smoke"] += 1
+                    if any(k in desc_lower for k in deforestation_keywords):
+                        st.session_state.threat_counts["🪓 Deforestation"] += 1
+                    if any(k in desc_lower for k in animal_keywords):
+                        st.session_state.threat_counts["🐾 Dangerous Animal"] += 1
+                    if any(k in desc_lower for k in human_keywords):
+                        st.session_state.threat_counts["🧍‍♂️ Human Activity"] += 1
+
+                    update_threat_display()
 
             time.sleep(0.1)
 
