@@ -1,27 +1,57 @@
-# FOREST EYE AEROBOT 
+# FOREST-EYE-AEROBOT
 
-## Description  
-The FOREST EYE AEROBOT is an innovative aerial drone designed for aerial surveillance and forest monitoring. Equipped with advanced sensors and imaging technology, it can collect critical data from hard-to-reach areas, providing valuable insights into forest health and wildlife activity.
+An intelligent autonomous aerial robotics system designed for forest monitoring, fire detection, and environmental surveillance using advanced AI and sensor fusion.
 
-## Features  
-- **High-resolution Camera**: Captures detailed images and videos.  
-- **GPS Navigation**: Accurate location tracking for enhanced operational efficiency.  
-- **Real-time Data Transmission**: Sends live feedback for immediate analysis.  
-- **Autonomous Flight Modes**: Supports automated flight paths for repeated monitoring tasks.  
-- **Durable Design**: Built to withstand challenging environmental conditions.  
+---
 
-## Hardware Components  
-- **Drone Frame**: Lightweight composite materials.  
-- **Motors**: High-efficiency brushless motors.  
-- **Battery**: Long-lasting lithium polymer battery.  
-- **Camera**: 4K resolution camera with adjustable gimbal.  
-- **Sensors**: LIDAR and infrared sensors for enhanced data collection.  
+## 📋 Description
 
-## System Architecture  
-The system consists of three major components:  
-1. **Ground Control Station**: Interface for operators to set flight paths and monitor data.  
-2. **Drone Unit**: The aerial platform equipped with sensors and cameras.  
-3. **Data Processing Unit**: Analyzes and stores collected data for further examination.  
+FOREST-EYE-AEROBOT is a cutting-edge aerial drone system integration unit with AI-powered image recognition, GPS tracking, and multi-sensor integration. It autonomously monitors forest areas, detects potential fire hazards, and provides real-time alerts using machine learning models.
 
-![Side View](https://your.repository.url/path/to/sideview.jpg)
-![Top View](https://your.repository.url/path/to/topview.jpg)
+---
+
+## ✨ Features
+
+- **🔥 Fire Detection**: AI-based image processing using Google Gemini API for accurate fire/smoke detection
+- **📍 GPS Tracking**: Real-time location tracking and geofencing capabilities
+- **📹 High-Resolution Imaging**: Advanced camera system for detailed aerial surveillance
+- **🤖 Machine Learning**: RNN-based alert system for predictive threat detection
+- **📊 Sensor Fusion**: Integrated environmental sensors (temperature, humidity, air quality)
+- **🚨 Real-Time Alerts**: Instant notifications when anomalies are detected
+- **⚡ Autonomous Operation**: Programmed flight paths and intelligent decision-making
+- **🌍 Environmental Monitoring**: Comprehensive data collection for ecosystem analysis
+
+---
+
+## 🔧 Hardware Components
+
+- **Camera Module**: High-resolution imaging system for visual analysis
+- **GPS Module**: Precision location and navigation system,phyphox app 
+- **Environmental Sensors**: Temperature, humidity, and air quality sensors
+- **Processing Unit**: Onboard computation for real-time AI inference - Raspberry pi 
+
+---
+
+## 📐 Design Views
+
+### Side View
+![Side View](sideview.jpg)
+
+### Top View
+![Top View](topview.jpg)
+
+---
+
+## 🛠️ System Architecture
+
+The project includes several key modules:
+
+- **`camera.py`**: Camera module control and image capture
+- **`gps.py`**: GPS data retrieval and location management
+- **`sensor.py`**: Environmental sensor data collection
+- **`image_processing_using_gemini.py`**: AI-powered image analysis using Google Gemini
+- **`ml_with_sensors.py`**: Machine learning integration with sensor data
+- **`RNN training for alerts`**: Neural network model for threat prediction and alerting
+
+
+
